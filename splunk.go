@@ -84,21 +84,20 @@ func NewClient(urlBase string, port string, endpoint string, tok string, maxByte
 	}
 }
 
-func (c *Client) BatchEvent(e *Event) (flushedBytes int, err error) {
+func (c *Client) BatchEvent(e *Event) error {
 	c.Lock()
 	defer c.Unlock()
 	c.BatchEvents = append(c.BatchEvents, e)
 	c.CurrentByteLength += int(unsafe.Sizeof(e))
 	if c.CurrentByteLength > c.MaxByteLength {
-		flushedBytes = c.CurrentByteLength
 		err := c.FlushBatch()
 		if err != nil {
-			return 0, err
+			return err
 		}
 		c.BatchEvents = nil
 		c.CurrentByteLength = 0
 	}
-	return flushedBytes, nil
+	return nil
 }
 
 func (c *Client) FlushBatch() error {
