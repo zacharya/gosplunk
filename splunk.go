@@ -41,6 +41,7 @@ type Event struct {
 }
 
 type Client struct {
+	sync.Mutex
 	HTTPClient        *http.Client
 	BaseURL           *url.URL
 	Endpoint          string
@@ -49,7 +50,7 @@ type Client struct {
 	MaxByteLength     int
 	MaxHECPutRetries  int
 	SSLVerify         bool
-	BatchEvents       *BatchEvents
+	BatchEvents       []*Event
 	CurrentByteLength int
 	Logger            *logging.Logger
 }
@@ -67,7 +68,6 @@ func NewBatchEvents() *BatchEvents {
 
 func NewClient(urlBase string, port string, endpoint string, tok string, maxByteLength int, maxHECPutRetries int, sslVerify bool) *Client {
 	baseURL, _ := url.Parse(urlBase + ":" + port + "/" + endpoint)
-	batchEvents := NewBatchEvents()
 	httpClientTimeout := time.Duration(30 * time.Second)
 
 	return &Client{
@@ -76,7 +76,7 @@ func NewClient(urlBase string, port string, endpoint string, tok string, maxByte
 		},
 		BaseURL:           baseURL,
 		Token:             tok,
-		BatchEvents:       batchEvents,
+		BatchEvents:       nil,
 		MaxHECPutRetries:  maxHECPutRetries,
 		SSLVerify:         sslVerify,
 		MaxByteLength:     maxByteLength,
@@ -84,18 +84,26 @@ func NewClient(urlBase string, port string, endpoint string, tok string, maxByte
 	}
 }
 
-func (c *Client) BatchEvent(e *Event) error {
-	// c.BatchEvents.Lock()
-	// defer c.BatchEvents.Unlock()
-	c.BatchEvents.Events = append(c.BatchEvents.Events, e)
+func (c *Client) BatchEvent(e *Event) (flushedBytes int, err error) {
+	c.Lock()
+	defer c.Unlock()
+	c.BatchEvents = append(c.BatchEvents, e)
 	c.CurrentByteLength += int(unsafe.Sizeof(e))
-
-	return nil
+	if c.CurrentByteLength > c.MaxByteLength {
+		flushedBytes = c.CurrentByteLength
+		err := c.FlushBatch()
+		if err != nil {
+			return 0, err
+		}
+		c.BatchEvents = nil
+		c.CurrentByteLength = 0
+	}
+	return flushedBytes, nil
 }
 
 func (c *Client) FlushBatch() error {
 	var postData string
-	for _, event := range c.BatchEvents.Events {
+	for _, event := range c.BatchEvents {
 		b, err := json.Marshal(event)
 		if err != nil {
 			return err
